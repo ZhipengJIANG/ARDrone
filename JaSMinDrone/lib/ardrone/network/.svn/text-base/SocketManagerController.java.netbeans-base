@@ -1,0 +1,58 @@
+package lib.ardrone.network;
+
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.SocketException;
+import lib.ardrone.ARDroneEntity;
+
+import lib.ardrone.Global;
+
+/**
+ * Design Pattern Singleton to insure only one SocketManager in the project!
+ *
+ * @author hoelter
+ *
+ */
+public class SocketManagerController {
+
+    private DatagramSocket socket = null;
+    private static SocketManagerController instance;
+    private ARDroneEntity drone = null;
+
+    private SocketManagerController(ARDroneEntity drone) {
+        try {
+            this.drone = drone;
+            if (!drone.getLocalHost()) {
+                socket = new DatagramSocket(Global.CONTROL_PORT_SIMUL);
+            } else {
+                socket = new DatagramSocket(Global.CONTROL_PORT_LOCAL);
+            }
+            socket.setSoTimeout(3000);
+
+        } catch (SocketException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+    }
+
+    public static SocketManagerController getInstance(ARDroneEntity drone) {
+        if (null == instance) { // First call
+            instance = new SocketManagerController(drone);
+
+        }
+        return instance;
+    }
+
+    /**
+     * Controller Method
+     */
+    public synchronized void sendATCommandPacket(DatagramPacket packet) {
+        try {
+            socket.send(packet);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+}

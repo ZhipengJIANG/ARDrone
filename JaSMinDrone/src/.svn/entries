@@ -1,0 +1,48 @@
+10
+
+dir
+188
+http://foundry.supelec.fr/svn/miniscube/trunk/codesDrone/JaSMinDrone/src
+http://foundry.supelec.fr/svn/miniscube
+
+
+
+2012-06-26T08:40:01.599266Z
+188
+presse_yan
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+610f7ad7-4faf-4e0a-a455-48246240dbe5
+
+gui_client
+dir
+
+lib
+dir
+
+
+
+add
+
+non_interactive_client
+dir
+
+parrot
+dir
+
+
+
+add
+

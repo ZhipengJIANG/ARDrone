@@ -1,0 +1,51 @@
+/*
+ * To change this template, choose Tools | Templates
+ * and open the template in the editor.
+ */
+package non_interactive_client;
+
+import java.io.IOException;
+import java.net.DatagramPacket;
+import java.net.InetAddress;
+import java.net.MulticastSocket;
+
+
+
+/**
+ *
+ * @author presse_yan
+ */
+public class Multicast {
+    
+     public static void main(String[] args) {
+         MulticastSocket ms;
+         InetAddress ia, interf;
+         try{
+              ms = new MulticastSocket(5554);
+              //ms.setSoTimeout(3000);
+              ia = InetAddress.getByName("224.1.1.1");
+              interf = InetAddress.getByName("192.168.1.3");
+              ms.setInterface(interf);
+              ms.joinGroup(ia);
+              byte[] tampon = new byte[10616];
+              while (true) {
+                  DatagramPacket dp = new DatagramPacket(tampon, tampon.length);
+                  ms.receive(dp);
+                  String s = new String(dp.getData(), "8859_1");
+                  System.out.println(s);
+              }
+         
+         
+         
+         
+         } catch (IOException ie) {
+             System.out.println(ie);
+             
+         }
+        
+         
+         
+         
+     }
+    
+}

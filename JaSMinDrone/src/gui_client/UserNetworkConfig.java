@@ -1,0 +1,229 @@
+package gui_client;
+
+import controlP5.Button;
+import controlP5.ControlP5;
+import controlP5.Textfield;
+import controlP5.Toggle;
+import lib.ardrone.ARDroneEntity;
+import napplet.NApplet;
+import processing.core.PFont;
+
+/**
+ * This is the applet for network configuration
+ *
+ * @author Yannick Presse
+ */
+public class UserNetworkConfig extends NApplet {
+
+    private Textfield tfName = null, tfId = null, tfIp = null, tfMultiIp = null;
+    private ControlP5 controlP5;
+    private Button butConnect = null;
+    private Toggle togMulticast = null, togPassiveMulticast = null, togLocalHost = null;
+    private ARDroneEntity drone = null;
+    private Toggle togPhoneAttached = null;
+    PFont mainFont;
+    gui_client.ARDroneUserInterface guiApplet;
+
+    /**
+     * Setup of the applet window
+     */
+    public void setup() {
+        size(440, 200);
+        background(0);
+        nappletCloseable = true;
+        mainFont = loadFont("../data/AppleBraille.vlw");
+        textFont(mainFont);
+
+        if (drone != null) {
+            //textMode(SCREEN);
+
+            controlP5 = new ControlP5(this);
+            controlP5.setAutoDraw(false);   //avoid a display bug on start-up, @author Yannick Presse
+
+
+            tfName = controlP5.addTextfield("Name", 40, 60, 80, 20);
+            tfName.setFocus(true);
+            tfName.setAutoClear(false);
+
+            tfId = controlP5.addTextfield("ID", 130, 60, 30, 20);
+            tfId.setAutoClear(false);
+
+            tfIp = controlP5.addTextfield("IP", 170, 60, 100, 20);
+            tfIp.setAutoClear(false);
+
+            tfMultiIp = controlP5.addTextfield("Multicast_Interface_IP", 200, 140, 100, 20);
+            tfMultiIp.setAutoClear(false);
+
+
+            tfIp.setValue("192.168.1.1");
+            tfName.setValue("drone");
+            tfId.setValue("1");
+            tfMultiIp.setValue("192.168.1.2");
+
+            togPhoneAttached = controlP5.addToggle("PhoneAttached", false, 280, 60, 65, 20);
+
+            togMulticast = controlP5.addToggle("Multicast", false, 50, 140, 50, 20);
+
+            togPassiveMulticast = controlP5.addToggle("Passive", false, 120, 140, 50, 20);
+
+            butConnect = controlP5.addButton("Connect", 0, 355, 60, 50, 20);
+
+            togLocalHost = controlP5.addToggle("LocalHost", false, 355, 140, 50, 20);
+
+        }
+    }
+
+    /**
+     * Draw the applet window
+     */
+    public void draw() {
+        background(0);
+        fill(255);
+        if (drone != null) {
+            textAlign(CENTER, CENTER);
+
+            text("Drone name: " + drone.getName() + " , Id: " + drone.getId()
+                    + " , IP: " + drone.getInetAddress(), width / 2, 10);
+
+            text("Validate any text changes by hitting Enter Key", width / 2, 110);
+
+            if (drone.hasMulticast()) {
+                tfMultiIp.show();
+                text("Multicast interface IP is :" + drone.getMultiInterfAdress(), 200, 180);
+            } else {
+                tfMultiIp.hide();
+            }
+
+            textAlign(LEFT, CENTER);
+
+            if (drone.getId() != 1) {
+                tfMultiIp.hide();
+                togMulticast.hide();
+                togPassiveMulticast.hide();
+                if (!drone.getLocalHost()) {
+                    text("Only leader (Id=1) can be on multicast", 45, 170);
+                }
+                if (togMulticast.getState()) {
+                    togMulticast.setValue(false);
+                }
+                if (togPassiveMulticast.getState()) {
+                    togPassiveMulticast.setValue(false);
+                }
+            } else {
+                togMulticast.show();
+                togPassiveMulticast.show();
+            }
+
+            if (drone.getLocalHost()) {
+                tfIp.hide();
+                if (togMulticast.getState()) {
+                    togMulticast.setValue(false);
+                }
+                togMulticast.hide();
+                togPassiveMulticast.hide();
+            } else {
+                tfIp.show();
+                if (drone.getId() == 1) {
+                    togMulticast.show();
+                    togPassiveMulticast.show();
+                }
+            }
+
+            controlP5.draw();   //avoid a display bug on start-up, @author Yannick Presse
+        }
+    }
+
+    /**
+     * Method called by the main class, create a new ARDrone Entity
+     *
+     * @param guiApplet
+     */
+    public void config(gui_client.ARDroneUserInterface guiApplet) {
+        drone = new ARDroneEntity();
+
+        this.guiApplet = guiApplet;
+
+        /**
+         * Avoid a bug of Napplet with double events listeners
+         */
+        // Thanks to Laurent Ciarletta!
+        if (this.getKeyListeners() == null) {
+            System.out.println("This Component doesn't have any keyboard listener");
+        } else {
+            System.out.println("It was created with a keyboard listener :  "
+                    + this.getKeyListeners().length);
+            this.removeKeyListener(this.getKeyListeners()[0]);
+            System.out.println("but I got rid of it");
+        }
+
+        if (this.getMouseListeners() == null) {
+            System.out.println("This Component doesn't have any mouse listener");
+        } else {
+            System.out.println("It was created with a mouse listener :  "
+                    + this.getMouseListeners().length);
+            this.removeMouseListener(this.getMouseListeners()[0]);
+            System.out.println("but I got rid of it");
+        }
+    }
+
+    private void Connect() {
+        if (drone.getName() != null && drone.getId() != 0
+                && drone.getInetAddress() != null) {
+            userWindowClose();
+            drone.connect();
+            while (!drone.connectionDone) {
+            }
+            guiApplet.setDrone(drone);
+            guiApplet.windowHide = false;
+            exit();
+        }
+    }
+
+    // if name text field is modified
+    private void Name(String name) {
+        drone.setName(name);
+    }
+
+    // if ID text field is modified
+    private void ID(String id) {
+        drone.setId(Integer.parseInt(id));
+    }
+
+    // if IP text field is modified
+    private void IP(String ip) {
+        drone.setInetAdress(ip);
+    }
+
+    //if Multicast interface IP is modified
+    private void Multicast_Interface_IP(String ip) {
+        drone.setMultiInterfAdress(ip);
+    }
+
+//	// if PhoneAttached toggled is modified
+    private void PhoneAttached(boolean theFlag) {
+        drone.setHasPhoneAttached(theFlag);
+        System.out.println("PhoneAttached: " + drone.hasPhoneAttached());
+    }
+
+    private void Multicast(boolean theFlag) {
+        drone.setMulticast(theFlag);
+        System.out.println("Multicast is " + drone.multicastComm);
+    }
+
+    private void Passive(boolean theFlag) {
+        if ((togMulticast.getState() != togPassiveMulticast.getState()) && !togMulticast.getState()) {
+            togMulticast.toggle();
+        }
+        drone.setPassiveMulticast(theFlag);
+        System.out.println("Passive Multicast is " + drone.passiveMulticast);
+    }
+
+    private void LocalHost(boolean theFlag) {
+        drone.setLocalHost(theFlag);
+        if (togLocalHost.getState()) {
+            IP("127.0.0.1");
+        } else {
+            IP("192.168.1.1");
+        }
+    }
+}

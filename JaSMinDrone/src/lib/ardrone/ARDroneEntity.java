@@ -1,0 +1,1010 @@
+/**
+ * @author Jeremie Hoelter
+ */
+package lib.ardrone;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.*;
+import java.util.StringTokenizer;
+import lib.ardrone.control.Control;
+import lib.ardrone.flightscenarii.FlightScenario;
+import lib.ardrone.navigationdata.NavDataHandler;
+import lib.ardrone.phone.PhoneServer;
+import lib.ardrone.video.VideoHandler;
+
+/**
+ *
+ * @author Yannick Presse
+ */
+public class ARDroneEntity {
+
+    private String name = null;
+    private int id = 0;
+    private int version = 1;
+    private InetAddress inetaddr = null, multicastInterfaceAdress = null;
+    private Control controller = null; // Control Thread
+    private VideoHandler ardroneVideo = null; // Video Thread
+    private NavDataHandler ardroneNavData = null; // NavData Thread
+    private FlightScenario suiviTag = null, suiviDynamique = null;
+    private PhoneServer phoneServer = null; // PhoneServer Thread if Phone is attached to the drone
+    private boolean hasPhoneAttached = false;
+    private int stateMask;
+    public float speed = (float) 0.4;
+    public float speedBF = (float) 0;
+    public float speedLR = (float) 0;
+    public float speedUD = (float) 0;
+    public float speedYaw = (float) 0;
+    public boolean landing = true;
+    public boolean moving = false;
+    public boolean disconnect = false; //force drone landing when disconnected
+    public boolean videoError, navDataError = false;
+    public boolean localHost = false;
+    public boolean altitudeCorrected = false; // to correct the altitude displayed using the pitch
+    public boolean multicastComm = false;
+    public boolean passiveMulticast = false;
+    public boolean navdataHandlerDone, videoHandlerDone, controllerDone, connectionDone = false;
+
+    /**
+     * Set the name of the drone
+     *
+     * @param name
+     */
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    /**
+     * Return the name of the drone
+     *
+     * @return
+     */
+    public String getName() {
+        return this.name;
+    }
+
+    /**
+     * Set the ID of the drone
+     *
+     * @param id
+     */
+    public void setId(int id) {
+        this.id = id;
+    }
+
+    /**
+     * Return the ID of the drone
+     *
+     * @return
+     */
+    public int getId() {
+        return this.id;
+    }
+
+     /**
+     * Set the version of the drone
+     *
+     * @param version
+     */
+    public void setVersion() {
+        URL url = null;
+        String ip = this.getInetAddress().getHostAddress();
+        System.out.println(ip);
+        
+        try {
+            url = new URL("ftp://" + ip + ":5551/version.txt");
+        } catch (MalformedURLException mue) {
+            mue.printStackTrace();
+        }
+
+        InputStream in = null;
+
+        try {
+            in = url.openStream();
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        }
+
+        BufferedReader reader = null;
+        try {
+            reader = new BufferedReader(new InputStreamReader(in));
+            String line;
+            if ((line = reader.readLine()) != null && line.startsWith("2")) {
+                System.out.println(line);
+                version = 2;
+            }else{
+                version = 1;
+                System.out.println(line);
+            }
+        } catch (IOException ioe) {
+            ioe.printStackTrace();
+        } finally {
+            try {
+                if (in != null) {
+                    in.close();
+                }
+                if (reader != null) {
+                    reader.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        };
+    }
+
+    /**
+     * Return the version of the drone
+     *
+     * @return
+     */
+    public int getVersion() {
+        return this.version;
+    }
+    
+    /**
+     * Set the IP adress of the drone
+     *
+     * @param ip
+     */
+    public void setInetAdress(String ip) {
+        StringTokenizer st = new StringTokenizer(ip, ".");
+
+        byte[] ip_bytes = new byte[4];
+        if (st.countTokens() == 4) {
+            for (int i = 0; i < 4; i++) {
+                ip_bytes[i] = (byte) Integer.parseInt(st.nextToken());
+            }
+        } else {
+            System.out.println("Incorrect IP address format: " + ip);
+        }
+
+        try {
+            inetaddr = InetAddress.getByAddress(ip_bytes);
+        } catch (UnknownHostException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        String ipLocalHost = "127.0.0.1";
+        if (ip.equals(ipLocalHost)) {
+            localHost = true;
+        } else {
+            localHost = false;
+        }
+    }
+
+    /**
+     * Retrun the IP adress of the drone
+     *
+     * @return
+     */
+    public InetAddress getInetAddress() {
+        return this.inetaddr;
+    }
+
+    /**
+     * get current speed
+     *
+     * @return
+     */
+    public int getCurrentSpeed() {
+        return (int) (speed * 100);
+    }
+
+    /**
+     * set speed, speed:0-100%
+     *
+     * @param speed
+     */
+    public void setSpeed(int speed) {
+        if (speed > 100) {
+            speed = 100;
+        } else if (speed < 0) {
+            speed = 0;
+        } else {
+            this.speed = (float) (speed / 100.0);
+        }
+    }
+
+    /**
+     * Transforms the integer speed in float for the combined move
+     *
+     * @param speed
+     * @return
+     */
+    public float setSpeedCombinedMove(int speed) {
+        float speedCombinedMove;
+        if (speed > 100) {
+            speedCombinedMove = 1;
+        } else if (speed < -100) {
+            speedCombinedMove = -1;
+        } else {
+            speedCombinedMove = (float) (speed / 100.0);
+        }
+        return speedCombinedMove;
+    }
+
+    /**
+     * Set the speed for backward and forward movements
+     *
+     * @param speed
+     */
+    public void setSpeedBF(float speed) {
+        this.speedBF = speed;
+    }
+
+    /**
+     * Set the speed for left and right movements
+     *
+     * @param speed
+     */
+    public void setSpeedLR(float speed) {
+        this.speedLR = speed;
+    }
+
+    /**
+     * Set the speed for up and down movements
+     *
+     * @param speed
+     */
+    public void setSpeedUD(float speed) {
+        this.speedUD = speed;
+    }
+
+    /**
+     * Set the speed for yaw movements
+     *
+     * @param speed
+     */
+    public void setSpeedYaw(float speed) {
+        this.speedYaw = speed;
+    }
+
+    /**
+     * Performs the connection to the drone
+     */
+    public void connect() {
+        if (!passiveMulticast) {
+            // connect Controller only if passive multicast is off
+            try {
+                controller = new Control(this);
+                controller.setName(name + " Controller");
+            } catch (SocketException e) {
+                e.printStackTrace();
+            }
+            // connect Video only if passive multicast is off
+            controller.enableVideoData();
+        }
+
+        ardroneVideo = new VideoHandler(this);
+        ardroneVideo.setName(name + " VideoHandler");
+
+        // connect NavData
+        ardroneNavData = new NavDataHandler(this);
+        ardroneNavData.setName(name + " NavDataHandler");
+        System.out.println(name + " Controller, Video and NavData setup!");
+
+        // connect PhoneServer if attached
+        if (hasPhoneAttached) {
+            phoneServer = new PhoneServer();
+            phoneServer.setName(name + " PhoneServer");
+        }
+
+        // start controller thread
+        if (!passiveMulticast) {
+            if (controller != null) {
+                controller.start();
+                System.out.println(name + " Controller thread started!");
+            }
+        }
+        // start navdata thread
+        if (ardroneNavData != null) {
+            ardroneNavData.start();
+        }
+        System.out.println(name + " NavData thread started!");
+        //start video thread
+        if (!localHost) {
+            if (ardroneVideo != null) {
+                ardroneVideo.start();
+            }
+        }
+        System.out.println(name + " Video thread started!");
+
+        // start PhoneServer thread if attached
+        if (phoneServer != null) {
+            phoneServer.start();
+            System.out.println(name + " PhoneServer thread started!");
+        }
+        while (!navdataHandlerDone && !videoHandlerDone && !controllerDone) {
+        }
+        
+        this.setVersion();
+        
+        connectionDone = true;
+    }
+
+    /**
+     * Performs disconnection from the drone
+     */
+    public void Disconnect() {
+        System.out.println(name + " Disconnection!");
+        if (!passiveMulticast) {
+            controller.kill();
+            controller = null;
+        }
+
+        if (ardroneNavData != null) {
+            ardroneNavData.kill();
+            ardroneNavData = null;
+        }
+        if (ardroneVideo != null) {
+            ardroneVideo.kill();
+            ardroneVideo = null;
+        }
+    }
+
+    /**
+     * Return the thread controller
+     *
+     * @return
+     */
+    public Control getController() {
+        if (controller != null) {
+            return controller;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Return the thread navdata handler
+     *
+     * @return
+     */
+    public NavDataHandler getNavDataHandler() {
+        if (ardroneNavData != null) {
+            return ardroneNavData;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Return the thread video handler
+     *
+     * @return
+     */
+    public VideoHandler getVideoHandler() {
+        if (ardroneVideo != null) {
+            return ardroneVideo;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Return the thread phone server
+     *
+     * @return
+     */
+    public PhoneServer getPhoneServer() {
+        if (phoneServer != null) {
+            return phoneServer;
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * Kill the controller thread
+     */
+    public void ControllerKill() {
+        controller.kill();
+        controller = null;
+    }
+
+    /**
+     * Kill the navdata handler thread
+     */
+    public void NavDataHandlerKill() {
+        ardroneNavData.kill();
+        ardroneNavData = null;
+    }
+
+    /**
+     * Kill the video handler thread
+     */
+    public void VideoHandlerKill() {
+        ardroneVideo.kill();
+        ardroneVideo = null;
+        System.out.println(name + " Video thread killed!");
+    }
+
+    /**
+     * Performs connection to the video handler
+     */
+    public void VideoHandlerConnect() {
+        if (ardroneVideo == null) {
+            ardroneVideo = new VideoHandler(this);
+        }
+        ardroneVideo.setName(name + " VideoHandler");
+        ardroneVideo.start();
+        System.out.println(name + " Video thread started!");
+    }
+
+    /**
+     * Set the scenario to tag detection mode
+     *
+     * @param flightScenario
+     */
+    public void setTagDetection(FlightScenario flightScenario) {
+        suiviTag = null;
+        suiviTag = flightScenario;
+        /*
+         * try { this.flightScenario= flight.getClass().newInstance(); } catch
+         * (InstantiationException e) { // TODO Auto-generated catch block
+         * e.printStackTrace(); } catch (IllegalAccessException e) { // TODO
+         * Auto-generated catch block e.printStackTrace(); }
+         */
+    }
+
+    /**
+     * Return the tag detection thread
+     *
+     * @return
+     */
+    public FlightScenario getTagDetection() {
+        return this.suiviTag;
+    }
+
+    /**
+     * Set the scenario to dynamic follow mode
+     *
+     * @param flightScenario
+     */
+    public void setSuiviDynamique(FlightScenario flightScenario) {
+        suiviDynamique = null;
+        suiviDynamique = flightScenario;
+    }
+
+    /**
+     * Start flight scenario mode
+     *
+     * @param flightScenario
+     */
+    public void startFlightScenario(FlightScenario flightScenario) {
+        flightScenario.start();
+    }
+
+    /**
+     * Stop the flight scenario
+     *
+     * @param flightScenario
+     */
+    public void stopFlightScenario(FlightScenario flightScenario) {
+        flightScenario.kill();
+        flightScenario = null;
+    }
+
+    /**
+     *
+     */
+    public void startPhoneServer() {
+    }
+
+    /**
+     * Set if a phone is attached to the drone
+     *
+     * @param hasPhoneAttached
+     */
+    public void setHasPhoneAttached(boolean hasPhoneAttached) {
+        this.hasPhoneAttached = hasPhoneAttached;
+    }
+
+    /**
+     * Return if a phone is attached to the drone
+     *
+     * @return
+     */
+    public boolean hasPhoneAttached() {
+        return hasPhoneAttached;
+    }
+
+    /**
+     * Reinitialize after a connection loss
+     */
+    public void reinitConnection() {
+
+
+        if (navDataError) {
+            navDataError = false;
+            ardroneNavData.reinitNavDataConnect();
+        }
+        if (videoError) {
+            videoError = false;
+            ardroneVideo.reinitVideoConnect();
+        }
+        controller.reinitControlConnect();
+    }
+
+    /*
+     * Methods called by Autopilot classe from package non_interactive_client
+     *
+     * @author: yannick presse
+     *
+     */
+    /**
+     * Detect the state of the drone and ask for an action if the drone is in
+     * emergency mode
+     *
+     * @return
+     */
+    public boolean testEmergency() {
+        boolean disconnection = false;
+        int touche = 0;
+        if ((getNavDataHandler().getNavDataStateMask().getStateMask() & (1 << 31)) != 0) {
+            System.out.println("\nEmergency mode detected, controls won't work");
+            System.out.println("Press 'e' then enter key to switch in normal mode.");
+            System.out.println("Any other key then enter key will exit.");
+            try {
+                touche = System.in.read();
+            } catch (Exception e) {
+            }
+            if (touche == 101) {
+
+                while ((getNavDataHandler().getNavDataStateMask().getStateMask() & (1 << 31)) != 0) {
+                    getController().emergency();
+
+                }
+                disconnection = false;
+            } else {
+                disconnection = true;
+            }
+        }
+        return disconnection;
+
+    }
+
+    /**
+     * Detect if the battery is low
+     *
+     * @return
+     */
+    public boolean testBatterie() {
+        boolean lowBatterie;
+        System.out.println("\nbattery: " + getNavDataHandler().getNavDataDemo().getBatteryPercentage() + "%\n");
+        if ((getNavDataHandler().getNavDataStateMask().getStateMask() & (1 << 15)) != 0) {
+            lowBatterie = true;
+        } else {
+            lowBatterie = false;
+        }
+        return lowBatterie;
+    }
+
+    /**
+     * Performs a trim
+     */
+    public void trim() {
+        System.out.println("\nTrim");
+        getController().trim();
+    }
+
+    /**
+     * Drone take-off
+     */
+    public void takeoff() {
+        System.out.println("\nTake-off");
+        landing = false;
+        moving = true;
+        try {
+            Thread.sleep(5000);
+        } catch (Exception e) {
+        }
+    }
+
+    /**
+     * The drone hovers during time in millisec
+     *
+     * @param time
+     */
+    public void hover(int time) {
+        System.out.println("\nHover during " + ((float) time / 1000) + "s");
+        getController().hover();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+    }
+
+    /**
+     * The drone goes forward during time in millisec
+     *
+     * @param time
+     */
+    public void goForward(int time) {
+        System.out.println("\nGo forward during " + ((float) time / 1000) + "s");
+        getController().forward();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone goes forward during time in millisec and moves at speed in
+     * percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void goForward(int time, int speed) {
+        setSpeed(speed);
+        goForward(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone goes backward during time in millisec
+     *
+     * @param time
+     */
+    public void goBackward(int time) {
+        System.out.println("\nGo backward during " + ((float) time / 1000) + "s");
+        getController().backward();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone goes backward during time in millisec and moves at speed in
+     * percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void goBackward(int time, int speed) {
+        setSpeed(speed);
+        goBackward(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone goes left during time in millisec
+     *
+     * @param time
+     */
+    public void goLeft(int time) {
+        System.out.println("\nGo left during " + ((float) time / 1000) + "s");
+        getController().goLeft();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone goes left during time in millisec and moves at speed in percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void goLeft(int time, int speed) {
+        setSpeed(speed);
+        goLeft(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone goes right during time in millisec
+     *
+     * @param time
+     */
+    public void goRight(int time) {
+        System.out.println("\nGo right during " + ((float) time / 1000) + "s");
+        getController().goRight();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone goes right during time in millisec and moves at speed in
+     * percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void goRight(int time, int speed) {
+        setSpeed(speed);
+        goRight(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone goes up during time in millisec
+     *
+     * @param time
+     */
+    public void up(int time) {
+        System.out.println("\nGo up during " + ((float) time / 1000) + "s");
+        getController().up();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone goes up during time in millisec and moves at speed in percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void up(int time, int speed) {
+        setSpeed(speed);
+        up(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone goes down during time in millisec
+     *
+     * @param time
+     */
+    public void down(int time) {
+        System.out.println("\nGo down during " + ((float) time / 1000) + "s");
+        getController().down();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone goes down during time in millisec and moves at speed in percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void down(int time, int speed) {
+        setSpeed(speed);
+        down(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone spins left during time in millisec
+     *
+     * @param time
+     */
+    public void spinLeft(int time) {
+        System.out.println("\nSpin left during " + ((float) time / 1000) + "s");
+        getController().spinLeft();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone spins left during time in millisec and moves at speed in
+     * percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void spinLeft(int time, int speed) {
+        setSpeed(speed);
+        spinLeft(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * The drone spins right during time in millisec
+     *
+     * @param time
+     */
+    public void spinRight(int time) {
+        System.out.println("\nSpin right during " + ((float) time / 1000) + "s");
+        getController().spinRight();
+        try {
+            Thread.sleep(time);
+        } catch (Exception e) {
+        }
+        getController().hover();
+    }
+
+    /**
+     * The drone spins left during time in millisec and moves at speed in
+     * percent
+     *
+     * @param time
+     * @param speed
+     */
+    public void spinRight(int time, int speed) {
+        setSpeed(speed);
+        spinRight(time);
+        System.out.println("at " + (speed) + "% of speed\n");
+        setSpeed(40);
+    }
+
+    /**
+     * the drone lands
+     */
+    public void landing() {
+        System.out.println("\nLanding");
+        landing = true;
+        moving = false;
+        getController().landing();
+        try {
+            Thread.sleep(1500);
+        } catch (Exception e) {
+        }
+    }
+
+    /**
+     * Performs a combined move
+     *
+     * @param time
+     * @param speedFB
+     * @param speedDU
+     * @param speedYawLR
+     */
+    public void combinedMoves(int time, int speedFB, int speedDU, int speedYawLR) {
+        float speedCombinedFB, speedCombinedDU, speedCombinedYaw;
+        String moveFB, moveDU, moveYawLR;
+        if (speedFB == 0 && speedDU == 0 && speedYawLR == 0) {
+        } else {
+            if (speedFB < 0) {
+                moveFB = " go forward ";
+            } else {
+                if (speedFB > 0) {
+                    moveFB = " go backward ";
+                } else {
+                    moveFB = "";
+                }
+            }
+            if (speedDU < 0) {
+                moveDU = " go down ";
+            } else {
+                if (speedDU > 0) {
+                    moveDU = " go up ";
+                } else {
+                    moveDU = "";
+                }
+            }
+            if (speedYawLR < 0) {
+                moveYawLR = " spin left ";
+            } else {
+                if (speedYawLR > 0) {
+                    moveYawLR = " spin right ";
+                } else {
+                    moveYawLR = "";
+                }
+            }
+            System.out.println("\nCombined moves during " + ((float) time / 1000) + "s");
+            System.out.println("The drone will " + moveFB + moveDU + moveYawLR);
+            speedCombinedFB = setSpeedCombinedMove(speedFB);
+            speedCombinedDU = setSpeedCombinedMove(speedDU);
+            speedCombinedYaw = setSpeedCombinedMove(speedYawLR);
+            getController().advancedMove(0, speedCombinedFB, speedCombinedDU, speedCombinedYaw);
+            try {
+                Thread.sleep(time);
+            } catch (Exception e) {
+            }
+            getController().hover();
+        }
+    }
+
+    public void networkNavDataError(int err) {
+        //System.out.println("NavData connection issue");
+        navDataError = true;
+    }
+
+    public void networkVideoError(int err) {
+        //System.out.println("Video connection issue");
+        videoError = true;
+    }
+
+    public void setMulticast(boolean multicastComm) {
+        this.multicastComm = multicastComm;
+    }
+
+    public boolean hasMulticast() {
+        return multicastComm;
+    }
+
+    public void setPassiveMulticast(boolean passiveMulticast) {
+        this.passiveMulticast = passiveMulticast;
+    }
+
+    public boolean hasPassiveMulticast() {
+        return passiveMulticast;
+    }
+
+    public void setMultiInterfAdress(String ip) {
+        StringTokenizer st = new StringTokenizer(ip, ".");
+
+        byte[] ip_bytes = new byte[4];
+        if (st.countTokens() == 4) {
+            for (int i = 0; i < 4; i++) {
+                ip_bytes[i] = (byte) Integer.parseInt(st.nextToken());
+            }
+        } else {
+            System.out.println("Incorrect IP address format: " + ip);
+        }
+
+        try {
+            multicastInterfaceAdress = InetAddress.getByAddress(ip_bytes);
+        } catch (UnknownHostException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+    }
+
+    public InetAddress getMultiInterfAdress() {
+        return this.multicastInterfaceAdress;
+    }
+
+    public void setLocalHost(boolean lochost) {
+        this.localHost = lochost;
+        System.out.println("Local Host is " + localHost);
+    }
+
+    public boolean getLocalHost() {
+        return this.localHost;
+    }
+
+    public void testDroneState() {
+        stateMask = getNavDataHandler().getNavDataStateMask().getStateMask();
+
+        System.out.println("Drone is flying: " + ((stateMask & (1 << 0)) != 0));
+        System.out.println("Video enable is " + ((stateMask & (1 << 1)) != 0));     //seems to be always said as disable (tested on fw 1.7.4 and 1.7.11)
+        System.out.println("Vision enable is " + ((stateMask & (1 << 2)) != 0));
+        System.out.println("Angular speed control algo is " + ((stateMask & (1 << 3)) != 0));
+        System.out.println("Altitude control algo is " + ((stateMask & (1 << 4)) != 0));
+        System.out.println("start button is " + ((stateMask & (1 << 5)) != 0));
+        System.out.println("Control command ACK is " + ((stateMask & (1 << 6)) != 0));
+        System.out.println("Firmware file is good: " + ((stateMask & (1 << 7)) != 0));
+        System.out.println("Firmware update is newer :" + ((stateMask & (1 << 8)) != 0));
+        System.out.println("Firmware update is ongoing:  " + ((stateMask & (1 << 9)) != 0));
+        System.out.println("NavDataDemo is " + ((stateMask & (1 << 10)) != 0));
+        System.out.println("NavDataBootstrap is " + ((stateMask & (1 << 11)) != 0));
+        System.out.println("Motors status is Ok: " + ((stateMask & (1 << 12)) == 0));
+        System.out.println("Communication status is " + ((stateMask & (1 << 13)) == 0));
+        System.out.println("Battery is low: " + ((stateMask & (1 << 15)) != 0));
+        System.out.println("User Emergency Landing is " + ((stateMask & (1 << 16)) != 0));
+        System.out.println("Timer is elapsed: " + ((stateMask & (1 << 17)) != 0));
+        System.out.println("Angles are out of range: " + ((stateMask & (1 << 19)) != 0));
+        System.out.println("Ultrasonic sensor is ok: " + ((stateMask & (1 << 21)) == 0));
+        System.out.println("Cutout system detection is detected: " + ((stateMask & (1 << 22)) != 0));
+        System.out.println("PIC version number is ok: " + ((stateMask & (1 << 23)) != 0));
+        System.out.println("ATCodec thread is on: " + ((stateMask & (1 << 24)) != 0));
+        System.out.println("Navdata thread is on: " + ((stateMask & (1 << 25)) != 0));
+        System.out.println("Video thread is on: " + ((stateMask & (1 << 26)) != 0));
+        System.out.println("Acquisition thread is on: " + ((stateMask & (1 << 27)) != 0));
+        System.out.println("Control watchdog is well scheduled: " + ((stateMask & (1 << 28)) != 0));
+        System.out.println("ADC watchdog in uart2 is good: " + ((stateMask & (1 << 29)) == 0));
+        System.out.println("Communication watchdog is ok: " + ((stateMask & (1 << 30)) == 0));
+        System.out.println("emergency mode is " + ((stateMask & (1 << 31)) != 0));
+    }
+}

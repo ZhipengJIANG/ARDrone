@@ -1,0 +1,832 @@
+/**
+ * @author Jeremie Hoelter Drone Entity Main Class handles three Threads:
+ * Control, NavData and Video. Takes care of GUI as well per drone.
+ *
+ */
+package gui_client;
+
+import controlP5.*;
+import java.awt.Graphics2D;
+import java.awt.event.KeyEvent;
+import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.text.DecimalFormat;
+import java.util.ArrayList;
+import javax.swing.JOptionPane;
+import lib.ardrone.ARDroneEntity;
+import lib.ardrone.flightscenarii.FlightScenario;
+import lib.ardrone.flightscenarii.DynamicFollowing;
+import lib.ardrone.flightscenarii.TagFollowing;
+import lib.ardrone.listeners.ImageListener;
+import napplet.NApplet;
+import processing.core.PConstants;
+import processing.core.PFont;
+import processing.core.PImage;
+
+/**
+ * @author Jeremie Hoelter Drone Entity Main Class handles three Threads:
+ * Control, NavData and Video. Takes care of GUI as well per drone.
+ *
+ * @modified by Yannick Presse
+ */
+public class ARDroneUserInterface extends NApplet {
+
+    /**
+     * Hide the UserInterface applet while network configuration applet is on
+     */
+    public boolean windowHide = true;
+    private static final long serialVersionUID = 1L;
+    PFont mainFont;
+    private ARDroneEntity drone = null;
+    private BufferedImage videoImage = null;
+    private ControlP5 controlP5;
+    private ArrayList<Controller> controllersList;
+    private Button butDisconnect = null;
+    private Slider slidSpeed = null;
+    private Toggle togVideo = null, togScenarioTag = null, togScenarioDynamique = null, togNavdataDemo = null, togAltitudeCorrected = null, togMaxAltitude = null;
+    private FlightScenario TagFollowing = null, DynamicFollowing = null;
+    private double fps = 20, nps = 150; // to have relevant figures from start
+    private boolean Video = true, Scenario = false; // to track if we want to have a running video Thread / activate Flight Scenario
+    //Semaphore setupDone = new Semaphore(0);
+    private String[] tagInfoString;
+    private RadioButton tagColor;
+    private boolean navdataDemo = false, emergency = false, lowBattery = false, alreadyShown = false;
+    //Necessary since we do not know the drone version whent the window is opened.
+    private int spacing = 0;
+    private int counter = 0;
+
+    /**
+     * Method called by Network Configuration Applet, set the drone entity, call
+     * a method (endSetup) made for lighten the setup method
+     *
+     * @param drone
+     */
+    public void setDrone(ARDroneEntity drone) {
+        this.drone = drone;
+        endSetup();
+    }
+
+    /**
+     * Setup of the applet window
+     */
+    public void setup() {
+        size(500, 670);
+        background(0);
+        fill(255);
+        nappletCloseable = true;
+        setVisible(false);
+        //hide();
+    }
+
+    private void endSetup() {
+
+        drone.getVideoHandler().setImageListener(new ImageListener() {
+
+            @Override
+            public void imageUpdated(BufferedImage image) {
+                if (image.getWidth() == 176) {
+                    image = resize(image, 320, 240);
+                }
+
+                setVideoImage(image);
+            }
+        });
+
+
+        mainFont = loadFont("../data/AppleBraille.vlw");
+        textFont(mainFont);
+        controlP5 = new ControlP5(this);
+        controlP5.setAutoDraw(false);   //avoid a display bug on start-up, @author Yannick Presse
+        controllersList = new ArrayList<Controller>();
+        tagInfoString = new String[4];
+        butDisconnect = controlP5.addButton("Disconnect", 0, 440, 10, 60, 20);
+        slidSpeed = controlP5.addSlider("Speed", 0, 100, 40, 10, 270, 100, 10); //change default speed value from 10 to 40 @author Yannick Presse
+        controllersList.add(slidSpeed);
+        togNavdataDemo = controlP5.addToggle("NavData_Demo", false, 10, 295, 60, 20);   //New toggle button to enable NavDataDemo @author Yannick Presse
+        controllersList.add(togNavdataDemo);
+        togVideo = controlP5.addToggle("Video", true, 180, 270, 40, 20);
+        controllersList.add(togVideo);
+        togScenarioTag = controlP5.addToggle("Tag", false, 260, 270, 40, 20);
+        controllersList.add(togScenarioTag);
+        tagColor = controlP5.addRadioButton("TagColor", 310, 270);      //New buttons to choose
+        addToRadioButton(tagColor, "Yellow", 1);                        //the color of the tag
+        addToRadioButton(tagColor, "Green", 2);                         //(used in the tag following
+        addToRadioButton(tagColor, "Blue", 3);                          //scenario)
+        tagColor.activate("Yellow");                                    // default color is Yellow     @author Yannick Presse
+        togScenarioDynamique = controlP5.addToggle("Dynamique", false, 420,
+                270, 40, 20);
+        controllersList.add(togScenarioDynamique);
+        togAltitudeCorrected = controlP5.addToggle("Corrected", false, 400, 100, 43, 18);  // button used to correct altitude using pitch    @author Yannick Presse
+        togMaxAltitude = controlP5.addToggle("Max", false, 460, 100, 18, 18);  // button used to set max altitude (3m or 10m)    @author Yannick Presse
+        controllersList.add(togMaxAltitude);
+
+        if (drone.localHost) {
+            togNavdataDemo.setState(true);
+            togNavdataDemo.hide();
+            togVideo.setState(false);
+        }
+        /**
+         * Avoid a bug of Napplet with double events listeners
+         */
+        // Thanks to Laurent Ciarletta!
+        if (!this.drone.hasPassiveMulticast()) {
+            if (this.getKeyListeners() == null) {
+                System.out.println("This Component doesn't have any keyboard listener");
+            } else {
+                System.out.println("It was created with a keyboard listener :  "
+                        + this.getKeyListeners().length);
+                this.removeKeyListener(this.getKeyListeners()[0]);
+                System.out.println("but I got rid of it");
+            }
+
+            if (this.getMouseListeners() == null) {
+                System.out.println("This Component doesn't have any mouse listener");
+            } else {
+                System.out.println("It was created with a mouse listener :  "
+                        + this.getMouseListeners().length);
+                this.removeMouseListener(this.getMouseListeners()[0]);
+                System.out.println("but I got rid of it");
+            }
+        }
+        //setupDone.release();
+    }
+
+    /*
+     * add the radio buttons for tag colors @author Yannick Presse
+     */
+    private void addToRadioButton(RadioButton theRadioButton, String theName, int theValue) {
+        Toggle t = theRadioButton.addItem(theName, theValue);
+        t.captionLabel().setColorBackground(color(80));
+        t.captionLabel().style().movePadding(2, 0, -1, 2);
+        t.captionLabel().style().moveMargin(-2, 0, 0, -3);
+        t.captionLabel().style().backgroundWidth = 46;
+    }
+
+    /**
+     * Draw the applet window
+     */
+    public void draw() {
+        background(0);
+        fill(255);
+        textAlign(LEFT, CENTER);
+
+        if (windowHide) {
+            setVisible(false);
+            //hide();
+        } else {
+            if (!alreadyShown) {
+                setVisible(true);
+                alreadyShown = true;
+            }
+            //show();
+            /*
+             * try { setupDone.acquire(); } catch (InterruptedException ex) { }
+             */
+
+            if (drone.getVersion() == 1) {
+                spacing = 7;
+            }
+
+            if (drone.hasPassiveMulticast()) {
+                for (Controller c : controllersList) {
+                    c.setVisible(false);
+                    tagColor.setVisible(false);
+                }
+            } else {
+                for (Controller c : controllersList) {
+                    c.setVisible(true);
+                    tagColor.setVisible(true);
+                }
+            }
+
+
+            //no video if a network error is detected @author Yannick Presse
+            if (drone.localHost) {
+                fill(255, 0, 0);
+                text("Connected on local host", 130, 90);
+                fill(255);
+            } else {
+                if (!drone.videoError) {
+
+                    // shows the video only if asked
+                    if (togVideo.getState()) {
+                        PImage img = getVideoImageAsPImage();
+                        if (img != null) {
+                            image(img, 5, 20);
+                        }
+                        // prints FPS
+                        if (drone.getVideoHandler() != null) {
+                            fps = 0.98 * fps + 0.02 * drone.getVideoHandler().fps;
+                            text(new DecimalFormat("0").format(fps) + "fps", 285, 27);
+                        }
+
+                    }
+                } else {
+                    fill(255, 0, 0);
+                    if (!drone.hasPassiveMulticast()) {
+                        text("A network error occured", 110, 90);
+                        text("please press 'r'", 130, 110);
+                        text("and wait for reinitialize", 110, 130);
+                        fill(255);
+                    } else {
+                        text("Passive multicast is on", 110, 90);
+                        text("please wait for an active client connection", 70, 120);
+                        fill(255);
+                    }
+                }
+            }
+            textFont(mainFont);
+            textAlign(CENTER, CENTER);
+            text("Drone name: " + drone.getName() + ", Id: " + drone.getId() + ", IP: "
+                    + drone.getInetAddress() + ", version: " + drone.getVersion(), width / 2, 10);
+
+            textAlign(LEFT, LEFT);
+            textFont(mainFont);
+
+            // if NavDataHandler properly connected, retrieves its data
+            if (drone.getNavDataHandler() != null) {
+
+                //Retrieve navdataDemo, low battery and emergency state from the state mask
+                navdataDemo = (drone.getNavDataHandler().getNavDataStateMask().getStateMask() & (1 << 10)) != 0;
+                lowBattery = (drone.getNavDataHandler().getNavDataStateMask().getStateMask() & (1 << 15)) != 0;
+                emergency = (drone.getNavDataHandler().getNavDataStateMask().getStateMask() & (1 << 31)) != 0;
+
+
+                // prints NavData NPS
+                nps = 0.95 * nps + 0.05 * drone.getNavDataHandler().nps;
+                text(new DecimalFormat("0").format(nps) + "nps", 455, 45);
+
+                text("pitch:"
+                        + (float) ((int) (drone.getNavDataHandler().getNavDataDemo().getPitch() * 100)) / 100
+                        + "\nroll:"
+                        + (float) ((int) (drone.getNavDataHandler().getNavDataDemo().getRoll() * 100)) / 100
+                        + "\nyaw:"
+                        + (float) ((int) (drone.getNavDataHandler().getNavDataDemo().getYaw() * 100)) / 100
+                        + "\naltitude:"
+                        + drone.getNavDataHandler().getNavDataDemo().getAltitude()
+                        + "\n     altitude"
+                        + "\n      param:",
+                        330, 45);
+
+                text("vx:"
+                        + (float) ((int) (drone.getNavDataHandler().getNavDataDemo().getVelocityX() * 100)) / 100
+                        + "\nvy:"
+                        + (float) ((int) (drone.getNavDataHandler().getNavDataDemo().getVelocityY() * 100)) / 100,
+                        330, 145);
+                text("battery:"
+                        + drone.getNavDataHandler().getNavDataDemo().getBatteryPercentage() + " %", 330, 180);
+                text("nb detected:"
+                        + drone.getNavDataHandler().getNavDataVisionDetect().getNbDetected(), 330, 200);
+                /*
+                 * Warning messages over the video for emergency mode, low
+                 * battery and low Power @author Yannick Presse
+                 */
+
+                if (emergency) {
+                    fill(255, 0, 0);
+                    text("EMERGENCY MODE", 130, 100);
+                    text("Press 'e'", 150, 180);
+                    fill(255);
+                }
+
+                if (lowBattery) {
+                    fill(255, 0, 0);
+                    text("LOW BATTERY", 130, 40);
+                    fill(255);
+                }
+
+
+                for (int i = 0; i < drone.getNavDataHandler().getNavDataVisionDetect().getNbDetected(); i++) {
+                    // if video is ON, draws circles on detected tags
+                    if (togVideo.getState()) {
+                        stroke(180, 50, 50);
+                        noFill();
+                        ellipse(drone.getNavDataHandler().getNavDataVisionDetect().getXc(i)
+                                * ((float) 320 / (float) (1000)), 20
+                                + drone.getNavDataHandler().getNavDataVisionDetect().getYc(i)
+                                * ((float) 240 / (float) 1000), 20, 20);
+                    }
+                    // prints tags data on screen
+                    tagInfoString[i] = (i + 1)
+                            + " dist:"
+                            + drone.getNavDataHandler().getNavDataVisionDetect().getDist(i)
+                            + " xc:"
+                            + drone.getNavDataHandler().getNavDataVisionDetect().getXc(i)
+                            + " yc:"
+                            + drone.getNavDataHandler().getNavDataVisionDetect().getYc(i);
+                    text(tagInfoString[i], 330, 215 + (15 * i));
+                }
+
+                if (!drone.navDataError) {      //no navdata if a network error is detected @author Yannick Presse
+
+                    if (!navdataDemo) { //no display when navdatademo or local host are enabled  @author Yannick Presse
+
+                        counter = 0;
+                        
+                        // Physical Measures
+                        text("Acc X:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPhysMeasures().getPhys_accs(0) * 100)) / 100, 330, 345 + (counter++) * spacing);
+                        text("Acc Y:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPhysMeasures().getPhys_accs(1) * 100)) / 100, 330, 355 + (counter++) * spacing);
+                        text("Acc Z:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPhysMeasures().getPhys_accs(2) * 100)) / 100, 330, 365 + (counter++) * spacing);
+                        text("Gyro X:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPhysMeasures().getPhys_gyros(0) * 100)) / 100, 330, 375 + (counter++) * spacing);
+                        text("Gyro Y:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPhysMeasures().getPhys_gyros(1) * 100)) / 100, 330, 385 + (counter++) * spacing);
+                        text("Gyro Z:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPhysMeasures().getPhys_gyros(2) * 100)) / 100, 330, 395 + (counter++) * spacing);
+                        text("Gyro Offset X:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataGyrosOffsets().getOffset(0) * 100)) / 100, 330, 405 + (counter++) * spacing);
+                        text("Gyro Offset Y:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataGyrosOffsets().getOffset(1) * 100)) / 100, 330, 415 + (counter++) * spacing);
+                        text("Gyro Offset Z:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataGyrosOffsets().getOffset(2) * 100)) / 100, 330, 425 + (counter++) * spacing);
+                        if(drone.getVersion() == 2){
+                            text("Pressure:"
+                                    + drone.getNavDataHandler().getNavDataPressureRaw().getPressureRaw(), 330, 435 + (counter++) * spacing);
+                            text("Temperature:"
+                                    + drone.getNavDataHandler().getNavDataPressureRaw().getTemperatureRaw(), 330, 445 + (counter++) * spacing);
+                        }
+                        
+                        counter = 0;
+
+                        text("Theta:"
+                                + drone.getNavDataHandler().getNavDataEulerAngles().getPhi_a(), 200, 345 + (counter++) * spacing);
+                        text("Phi:"
+                                + drone.getNavDataHandler().getNavDataEulerAngles().getPhi_a(), 200, 355 + (counter++) * spacing);
+                        text("Ref_Theta:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_theta(), 200, 365 + (counter++) * spacing);
+                        text("Ref_Phi:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_phi(), 200, 375 + (counter++) * spacing);
+                        text("Ref_Theta_I:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_theta_I(), 200, 385 + (counter++) * spacing);
+                        text("Ref_Phi_I:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_phi_I(), 200, 395 + (counter++) * spacing);
+                        text("Pitch:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_pitch(), 200, 405 + (counter++) * spacing);
+                        text("Roll:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_roll(), 200, 415 + (counter++) * spacing);
+                        text("Yaw:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_yaw(), 200, 425 + (counter++) * spacing);
+                        text("Psi:"
+                                + drone.getNavDataHandler().getNavDataReferences().getRef_psi(), 200, 435 + (counter++) * spacing);
+                        text("Vision X:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataVisionRaw().getVision_tx_raw() * 100)) / 100, 200, 445 + (counter++) * spacing);
+                        text("Vision Y:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataVisionRaw().getVision_ty_raw() * 100)) / 100, 200, 455 + (counter++) * spacing);
+                        text("Vision Z:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataVisionRaw().getVision_tz_raw() * 100)) / 100, 200, 465 + (counter++) * spacing);
+
+                        counter = 0;
+
+                        text("Motor1:"
+                                + drone.getNavDataHandler().getNavDataPwm().getMotor1(), 10, 345 + (counter++) * spacing);
+                        text("Motor2:"
+                                + drone.getNavDataHandler().getNavDataPwm().getMotor2(), 10, 355 + (counter++) * spacing);
+                        text("Motor3:"
+                                + drone.getNavDataHandler().getNavDataPwm().getMotor3(), 10, 365 + (counter++) * spacing);
+                        text("Motor4:"
+                                + drone.getNavDataHandler().getNavDataPwm().getMotor4(), 10, 375 + (counter++) * spacing);
+                        text("Gaz_Feed_forward:"
+                                + drone.getNavDataHandler().getNavDataPwm().getGaz_feed_forward(), 10, 385 + (counter++) * spacing);
+                        text("Gaz_Alt:"
+                                + drone.getNavDataHandler().getNavDataPwm().getGaz_altitude(), 10, 395 + (counter++) * spacing);
+                        text("Alt_int:"
+                                + drone.getNavDataHandler().getNavDataPwm().getAltitude_integral(), 10, 405 + (counter++) * spacing);
+                        text("vz_ref:"
+                                + (float) ((int) (drone.getNavDataHandler().getNavDataPwm().getVz_ref() * 100)) / 100, 10, 415 + (counter++) * spacing);
+                        text("u_pitch:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_pitch(), 10, 425 + counter * spacing);
+                        text("planif:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_pitch_planif(), 100, 425 + (counter++) * spacing);
+                        text("u_roll:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_roll(), 10, 435 + counter * spacing);
+                        text("planif:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_roll_planif(), 100, 435 + (counter++) * spacing);
+                        text("u_yaw:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_yaw(), 10, 445 + counter * spacing);
+                        text("planif:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_yaw_planif(), 100, 445 + (counter++) * spacing);
+                        text("yaw_u_I:"
+                                + drone.getNavDataHandler().getNavDataPwm().getU_pitch_planif(), 10, 455 + counter * spacing);
+                        text("planif:"
+                                + drone.getNavDataHandler().getNavDataPwm().getYaw_u_I_planif(), 100, 455 + (counter++) * spacing);
+                    } else {
+                        text("NavData Demo Enabled", 180, 400);
+                    }
+                } else {
+                    fill(255, 0, 0);
+                    if (drone.getLocalHost()) {
+                        fill(255);
+                        text("NavData Demo Enabled", 180, 400);
+                    } else {
+                        if (!drone.hasPassiveMulticast()) {
+                            text("A network error occured", 180, 380);
+                            text("please press 'r'", 200, 400);
+                            text("and wait for reinitialize", 180, 420);
+                            fill(255);
+                        } else {
+                            text("Passive multicast is on", 180, 380);
+                            text("please wait for an active client connection", 140, 410);
+                            fill(255);
+                        }
+                    }
+                }
+
+                if (this.drone.hasPhoneAttached()) {
+                    text("Latitude:"
+                            + drone.getPhoneServer().getPhoneData().getLatitude(),
+                            330, 450);
+                    text("Longitude:"
+                            + drone.getPhoneServer().getPhoneData().getLongitude(),
+                            330, 460);
+                    text("Altitude:"
+                            + drone.getPhoneServer().getPhoneData().getAltitude(),
+                            330, 470);
+
+                }
+
+                /*
+                 * Add commands summary
+                 */
+                if (!drone.passiveMulticast) {
+                    text("Controls:", 210, 495 + (++counter) * spacing);
+                    text("Shift = Take-off      Control = Landing ", 10, 515 + counter * spacing);
+                    text("t = Trim", 330, 515 + counter * spacing);
+                    text("Arrows keys = lateral movings", 10, 530 + counter * spacing);
+                    text("h = Hovering", 330, 530 + counter * spacing);
+                    text("z, s, q, d = Up, Down, Spin Left, Spin Right", 10, 545 + counter * spacing);
+                    text("v = Voice control by Kinect", 330, 545 + counter * spacing);
+                    text("e = Emergency mode (ON/OFF)", 10, 560 + counter * spacing);
+                    text("c = Next camera", 330, 560 + counter * spacing);
+                    text("r = Initialization", 10, 575 + counter * spacing);
+                    text("i = Sequence number reset", 330, 575 + counter * spacing);
+                    text("m = Get drone state mask", 10, 590 + counter * spacing);
+                } else {
+                    fill(255, 0, 0);
+                    text("Passive Multicast is on", 180, 515 + counter * spacing);
+                    text("No control available from this client", 145, 555 + counter * spacing);
+                    fill(255);
+                }
+
+
+            }
+            controlP5.draw();   //avoid a display bug on start-up, @author Yannick Presse
+            //setupDone.release();
+        }
+    }
+
+    private void setVideoImage(BufferedImage videoImage) {
+        this.videoImage = videoImage;
+    }
+
+    /**
+     * get video image as bufferedimage
+     *
+     * @return
+     */
+    private BufferedImage getVideoImageAsBufferedImage() {
+        return videoImage;
+    }
+
+    /**
+     * get ardrone view as pimage
+     *
+     * @return
+     */
+    private PImage getVideoImageAsPImage() {
+        try {
+            BufferedImage bimg = getVideoImageAsBufferedImage();
+            PImage img = new PImage(bimg.getWidth(), bimg.getHeight(),
+                    PConstants.ARGB);
+            bimg.getRGB(0, 0, img.width, img.height, img.pixels, 0, img.width);
+            img.updatePixels();
+            return img;
+        } catch (Exception e) {
+            // System.err.println("Can't create image from buffer");
+            // e.printStackTrace();
+        }
+        return null;
+    }
+
+    /**
+     * resize bufferedimage
+     *
+     * @param image
+     * @param width
+     * @param height
+     * @return
+     */
+    private BufferedImage resize(BufferedImage image, int width, int height) {
+        BufferedImage resizedImage = new BufferedImage(width, height,
+                BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = resizedImage.createGraphics();
+        g.drawImage(image, 0, 0, width, height, null);
+        g.dispose();
+        return resizedImage;
+    }
+
+    /**
+     * key management Apply a movement when a key is pressed and hover when it
+     * released
+     *
+     * @param event
+     * @author Yannick Presse
+     */
+    public void keyPressed(KeyEvent event) {
+        int source = event.getKeyCode();
+        if (!this.drone.hasPassiveMulticast()) {
+            switch (source) {
+                case KeyEvent.VK_CONTROL: {
+                    System.out.println(" Landing");
+                    drone.landing = true;
+                    drone.moving = false;
+                    drone.getController().landing();
+                    break;
+                }
+                case KeyEvent.VK_E: {
+                    System.out.println(" Emergency");
+                    drone.landing = true;
+                    drone.moving = false;
+                    drone.getController().emergency();
+                    break;
+                }
+                case KeyEvent.VK_T: {
+                    System.out.println(" Trim");
+                    drone.getController().trim();
+                    break;
+                }
+                case KeyEvent.VK_H: {
+                    System.out.println(" Hover");
+                    drone.moving = true;
+                    drone.getController().hover();
+                    break;
+                }
+                case KeyEvent.VK_C: {
+                    System.out.println(" Next Camera");
+                    drone.getController().setNextCamera();
+                    break;
+                }
+                case KeyEvent.VK_I: {
+                    System.out.println(" Initiate Sequence");
+                    drone.getController().initSeq();
+                    break;
+                }
+                case KeyEvent.VK_R: {
+                    System.out.println(" Re-Initialize");
+                    drone.reinitConnection();
+                    break;
+                }
+                case KeyEvent.VK_SHIFT: {
+                    System.out.println(" Take Off");
+                    drone.landing = false;
+                    drone.moving = true;
+                    drone.getController().takeOff();
+                    break;
+                }
+                case KeyEvent.VK_UP: {
+                    System.out.println(" Forward");
+                    drone.moving = true;
+                    drone.getController().forward();
+                    break;
+                }
+                case KeyEvent.VK_DOWN: {
+                    System.out.println(" Backward");
+                    drone.moving = true;
+                    drone.getController().backward();
+                    break;
+                }
+                case KeyEvent.VK_RIGHT: {
+                    System.out.println(" Right");
+                    drone.moving = true;
+                    drone.getController().goRight();
+                    break;
+                }
+                case KeyEvent.VK_LEFT: {
+                    System.out.println(" Left");
+                    drone.moving = true;
+                    drone.getController().goLeft();
+                    break;
+                }
+                case KeyEvent.VK_Z: {
+                    System.out.println(" Up");
+                    drone.moving = true;
+                    drone.getController().up();
+                    break;
+                }
+                case KeyEvent.VK_S: {
+                    System.out.println(" Down");
+                    drone.moving = true;
+                    drone.getController().down();
+                    break;
+                }
+                case KeyEvent.VK_D: {
+                    System.out.println(" Turn Right");
+                    drone.moving = true;
+                    drone.getController().spinRight();
+                    break;
+                }
+                case KeyEvent.VK_Q: {
+                    System.out.println(" Turn Left");
+                    drone.moving = true;
+                    drone.getController().spinLeft();
+                    break;
+                }
+                case KeyEvent.VK_M: {
+                    drone.testDroneState();
+                    break;
+                }
+                case KeyEvent.VK_V: {
+                    System.out.println(" Voice control model ");
+                    
+                    while(true) {
+                        try {
+                            ServerSocket ss = new ServerSocket(1800);
+                            Socket s = ss.accept();
+                            System.out.println("Client Accepted");
+                            BufferedReader br = new BufferedReader(new InputStreamReader(s.getInputStream()));
+                            System.out.println(br.readLine());
+                            if(br.readLine() != null) {
+                                JOptionPane.showMessageDialog(null, br.readLine(), "Message from kinect", JOptionPane.ERROR_MESSAGE);
+                                break;
+                            }
+                            PrintWriter wr = new PrintWriter(new OutputStreamWriter(s.getOutputStream()), true);
+//                            wr.println("Welcome to Socket Programming");
+                        } catch (Exception e) {
+                            System.out.println(e);
+                        }
+                    }                    
+                    break;
+                }
+            }
+        }
+    }
+
+    public void keyReleased(KeyEvent event) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (drone.moving) {
+                drone.getController().hover();
+            }
+        }
+    }
+
+    /**
+     * Change movement speed
+     *
+     * @param input
+     */
+    private void Speed(int input) {
+        drone.setSpeed(input);
+    }
+
+    /**
+     * Switch video on/off
+     *
+     * @param theFlag
+     */
+    private void Video(boolean theFlag) {
+        if (!theFlag) {
+            drone.VideoHandlerKill();
+            drone.getController().disableVideoData();
+
+        } else {
+            drone.getController().enableVideoData();
+            if (drone.getVideoHandler() == null) {
+                drone.VideoHandlerConnect();
+                drone.getVideoHandler().setImageListener(new ImageListener() {
+
+                    @Override
+                    public void imageUpdated(BufferedImage image) {
+
+                        if (image.getWidth() == 176) {
+                            image = resize(image, 320, 240);
+                        }
+
+                        setVideoImage(image);
+                    }
+                });
+            }
+        }
+    }
+
+    /**
+     * Disconnects the drone with soft landing, stops its Threads and close the
+     * applet window.
+     */
+    private void Disconnect() {
+        if (!this.drone.hasPassiveMulticast()) {
+            drone.disconnect = true; //force drone landing when disconnected
+            drone.getController().landing();
+        }
+        drone.Disconnect();
+        exit();
+    }
+
+    /**
+     * Launch or close the "follow the tag" scenario
+     *
+     * @param theFlag
+     */
+    private void Tag(boolean theFlag) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (theFlag) {
+                TagFollowing = new TagFollowing(drone);     // add this here to allow
+                drone.setTagDetection(TagFollowing);    // scenario to work several times in a row @author Yannick Presse
+                drone.startFlightScenario(TagFollowing);
+                System.out.println("TagFollowing begins");
+            } else {
+                drone.stopFlightScenario(TagFollowing);
+                System.out.println("TagFollowing ends");
+            }
+        }
+    }
+
+    /**
+     * Launch or close the "dynamic follow" scenario
+     *
+     * @param theFlag
+     */
+    private void Dynamique(boolean theFlag) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (theFlag) {
+                DynamicFollowing = new DynamicFollowing(drone);     // add this here to allow
+                drone.setSuiviDynamique(DynamicFollowing);         // scenario to work several times @author Yannick Presse
+                drone.startFlightScenario(DynamicFollowing);
+                System.out.println("DynamicFollowing begins");
+            } else {
+                drone.stopFlightScenario(DynamicFollowing);
+                System.out.println("DynamicFollowing ends");
+            }
+        }
+    }
+
+    /**
+     * Choose the color of the tag to be detected
+     *
+     * @author: Yannick Presse
+     * @param theEvent
+     */
+    public void controlEvent(ControlEvent theEvent) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (theEvent.isGroup()) {
+                drone.getController().tagColor((int) theEvent.group().value());
+            }
+        }
+    }
+
+    /**
+     * Toggle NavData mode (full or demo)
+     *
+     * @author: Yannick Presse
+     * @param theFlag
+     */
+    private void NavData_Demo(boolean theFlag) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (theFlag) {
+                drone.getController().enableDemoData();
+            } else {
+                drone.getController().disableDemoData();
+            }
+        }
+    }
+
+    /**
+     * Toggle altitude corrected mode
+     *
+     * @author: Yannick Presse
+     * @param theFlag
+     */
+    private void Corrected(boolean theFlag) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (theFlag) {
+                drone.altitudeCorrected = true;
+
+            } else {
+                drone.altitudeCorrected = false;
+            }
+        }
+    }
+
+    /**
+     * Toggle max altitude (3m or 10m)
+     *
+     * @author: Yannick Presse
+     * @param theFlag
+     */
+    private void Max(boolean theFlag) {
+        if (!this.drone.hasPassiveMulticast()) {
+            if (theFlag) {
+                drone.getController().altitudeMax(10000);
+
+            } else {
+                drone.getController().altitudeMax(3000);
+            }
+        }
+    }
+}

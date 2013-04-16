@@ -1,0 +1,72 @@
+/**
+ * @author DreamTeam
+ */
+package lib.ardrone.flightscenarii;
+
+import lib.ardrone.ARDroneEntity;
+import lib.ardrone.navigationdata.*;
+
+/**
+ * This is the thread for the "follow the tag" flight scenario
+ *
+ * @author Yannick Presse
+ */
+public class TagFollowing extends FlightScenario {
+
+    double wantedDistance = 150.0;      //this is the desired distance between tag and drone (in cm)
+
+    /**
+     *
+     * @param drone
+     */
+    public TagFollowing(ARDroneEntity drone) {
+        this.drone = drone;
+    }
+
+    public void run() {
+
+        drone.landing = false;   //needed to accept control commands
+
+        this.drone.getController().hoverTag();
+
+        while (!kill) {
+            if (this.drone.getNavDataHandler().getNavDataVisionDetect().getNbDetected() != 0) {
+
+                double z = -(this.drone.getNavDataHandler().getNavDataVisionDetect().getDist(0) - wantedDistance);       //wanted distance in cm
+                double x = ((this.drone.getNavDataHandler().getNavDataVisionDetect().getXc(0) - 500.0) / 500.0);
+                double y = -((this.drone.getNavDataHandler().getNavDataVisionDetect().getYc(0) - 500.0) / 500.0);
+                double t = (this.drone.getNavDataHandler().getNavDataVisionDetect().getXc(0) - 500.0);
+                double norm = Math.sqrt(Math.pow(x, 2) + Math.pow(y, 2) + Math.pow(z, 2));
+
+                float vectX = Math.abs(0.004 * x * norm) > 0.03 ? (float) (0.004 * x * norm) : (float) 0;      //minimal value for moving is 3%, else it will hover
+                vectX = ((float) (((int) (vectX * 100))) / 100);
+                vectX = (vectX > 0.4) ? (float) 0.4 : vectX;            //maximal value is 40%
+                vectX = (vectX < -0.4) ? (float) -0.4 : vectX;          //maximal value is 40%
+
+                float vectY = Math.abs(0.008 * y * norm) > 0.03 ? (float) (0.008 * y * norm) : (float) 0;      //minimal value for moving is 3%, else it will hover
+                vectY = ((float) (((int) (vectY * 100))) / 100);
+                vectY = (vectY > 0.5) ? (float) 0.5 : vectY;            //maximal value is 50%
+                vectY = (vectY < -0.5) ? (float) -0.5 : vectY;          //maximal value is 50%
+
+                double coeff_vectZ = z < 0 ? 0.2 : 0.3;     // it will go backward with more speed than go forward
+                float vectZ = Math.abs(coeff_vectZ * 0.0001 * z * norm) > 0.03 ? (float) (coeff_vectZ * 0.0001 * z * norm) : (float) 0;     //minimal value for moving is 3%, else it will hover
+                vectZ = ((float) (((int) (vectZ * 100))) / 100);
+                vectZ = (vectZ > 0.4) ? (float) 0.4 : vectZ;            //maximal value is 40%
+                vectZ = (vectZ < -0.4) ? (float) -0.4 : vectZ;          //maximal value is 40%
+
+                float yaw = Math.abs(t / 500) > 0.03 ? (float) (t / 500) : (float) 0;       //minimal value for moving is 3%, else it will hover
+                yaw = ((float) (((int) (yaw * 100))) / 100);
+                yaw = (yaw > 0.4) ? (float) 0.4 : yaw;                  //maximal value is 40%
+                yaw = (yaw < -0.4) ? (float) -0.4 : yaw;                //maximal value is 40%
+
+                this.drone.getController().advancedMove(vectX, vectZ, vectY, yaw);  // Here vectZ are distance and vect Y altitude,  this is implemented in other way in avancedMove 
+                //System.out.println("VectX = " + vectX + " ; VectY = " + vectY + " ; VectZ = " + vectZ + " ; Yaw= " + yaw);
+
+            } else {
+                this.drone.getController().hoverTag();
+            }
+        }
+
+        this.drone.getController().landing();
+    }
+}
